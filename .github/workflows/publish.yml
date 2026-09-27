@@ -1,0 +1,78 @@
+# Publish @spec0/schema-graph to npm.
+#
+# Trigger: push a tag `vX.Y.Z` that matches the version in package.json.
+#
+# Authentication: the NPM_TOKEN repository secret. If this repository is later
+# registered as a trusted publisher on npmjs.com, npm (11.5+) uses the OIDC
+# token from `id-token: write` instead and the secret is no longer needed.
+#
+# --provenance links the published version to this repository and the workflow
+# run that built it. It needs a public repository and `id-token: write`.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # npm 10 (bundled with Node 20) has no OIDC trusted publishing. Pinned to
+      # 11.x: npm 12 requires a newer Node than 20.
+      - name: Upgrade npm
+        run: npm install -g "npm@^11.5.0"
+
+      # npm versions are permanent, so a tag that disagrees with package.json
+      # must fail before anything is published.
+      - name: Tag and package.json must agree
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${REF#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+            echo "::error::Tag $REF implies $TAG_VERSION but package.json says $PKG_VERSION. Bump the version, commit, then tag."
+            exit 1
+          fi
+
+      - name: Install, type-check, test, build
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      # Checks the built package resolves under plain Node ESM, which bundlers
+      # hide and tests don't cover.
+      - name: Smoke test the built package
+        run: |
+          node --input-type=module -e "
+            import { buildSchemaGraph } from './dist/index.js';
+            const spec = { openapi: '3.0.0', info: { title: 't', version: '1' }, paths: {},
+              components: { schemas: { A: { type: 'object', properties: { b: { \$ref: '#/components/schemas/B' } } }, B: { type: 'string' } } } };
+            const g = buildSchemaGraph(spec);
+            if (g.schemas.length !== 2) { console.error('expected 2 schemas, got', g.schemas.length); process.exit(1); }
+            if (!g.edges.some((e) => e.from === 'A' && e.to === 'B')) { console.error('missing the A -> B reference edge'); process.exit(1); }
+            console.log('resolved', g.schemas.length, 'schemas and', g.edges.length, 'edges');
+          "
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
