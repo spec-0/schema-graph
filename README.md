@@ -1,4 +1,17 @@
-# @spec0/schema-graph
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/spec-0/schema-graph/main/.github/assets/spec0-schema-graph-dark.svg">
+    <img alt="@spec0/schema-graph" src="https://raw.githubusercontent.com/spec-0/schema-graph/main/.github/assets/spec0-schema-graph-light.svg" width="380">
+  </picture>
+</h1>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@spec0/schema-graph"><img alt="npm" src="https://img.shields.io/npm/v/@spec0/schema-graph?color=5B4CF5"></a>
+  <a href="https://github.com/spec-0/schema-graph/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/spec-0/schema-graph/ci.yml?branch=main&label=CI"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/npm/l/@spec0/schema-graph?color=52525B"></a>
+</p>
+
+<p align="center"><code>npm install @spec0/schema-graph</code></p>
 
 Reads an OpenAPI document and turns its schemas into a graph you can look at.
 
