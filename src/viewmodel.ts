@@ -1,5 +1,5 @@
 import dagre from "@dagrejs/dagre";
-import type { GraphEdge, OperationNode, SchemaGraph, SchemaNode } from "./types.js";
+import type { FieldSummary, GraphEdge, OperationNode, SchemaGraph, SchemaNode } from "./types.js";
 
 /**
  * Pure view-model for the canvas: which nodes are visible under progressive
@@ -60,6 +60,55 @@ const OP_H = 44;
 
 /** Cap on neighbours revealed per hop — see ViewOptions.maxNeighbours. */
 export const DEFAULT_MAX_NEIGHBOURS = 12;
+
+/**
+ * How many of a schema's fields its node lists. A node that only says "5 fields"
+ * makes the reader click every box to learn what's in it; the first few fields,
+ * with their types, answer most of that at a glance.
+ */
+export const PREVIEW_FIELDS = 4;
+
+/** The fields a schema's node lists, and how many more there are. */
+export function fieldPreview(schema: SchemaNode, limit = PREVIEW_FIELDS): { fields: FieldSummary[]; more: number } {
+  const fields = schema.fields.slice(0, limit);
+  return { fields, more: schema.fields.length - fields.length };
+}
+
+// The node's parts, in pixels: the header with the name, one line per listed
+// field, and a "+N more" line. Layout needs the real height, or dagre packs
+// taller nodes into each other.
+const HEADER_H = 34;
+const FIELD_LINE_H = 18;
+const NODE_PAD_B = 8;
+
+/** A schema node's height, given the fields it lists. */
+export function schemaHeight(schema: SchemaNode): number {
+  const { fields, more } = fieldPreview(schema);
+  const lines = fields.length + (more > 0 ? 1 : 0);
+  return lines === 0 ? SCHEMA_H - 28 : HEADER_H + lines * FIELD_LINE_H + NODE_PAD_B;
+}
+
+/** A schema node's width: wide enough for its name and its listed fields, within limits. */
+export function schemaWidth(schema: SchemaNode): number {
+  const name = widthForLabel(schema.name);
+  const longest = fieldPreview(schema).fields.reduce((most, f) => Math.max(most, f.name.length + f.type.length + 3), 0);
+  return Math.round(Math.max(name, Math.min(420, 24 + longest * 6.8)));
+}
+
+/** The schema a field's type names, if any: `Address` and `Address[]` both name Address. */
+export function referencedName(type: string): string {
+  return type.replace(/(\[\])+$/, "");
+}
+
+/**
+ * What labels a `references` edge: the fields of `from` whose type is `to`.
+ * Undefined when the reference is deeper than a direct field (inside `allOf`, a
+ * map, a nested object), where there's no single field to name.
+ */
+export function referenceLabel(from: SchemaNode, to: string): string | undefined {
+  const names = from.fields.filter((f) => referencedName(f.type) === to).map((f) => f.name);
+  return names.length ? names.join(", ") : undefined;
+}
 
 /**
  * Box width for a label. Generated specs produce names like
@@ -156,10 +205,13 @@ export function computeView(graph: SchemaGraph, options: ViewOptions): View {
   g.setGraph({ rankdir: "LR", nodesep: 56, ranksep: 140, marginx: 32, marginy: 32 });
   g.setDefaultEdgeLabel(() => ({}));
   const widths = new Map<string, number>();
+  const heights = new Map<string, number>();
   for (const s of schemaNodes) {
-    const width = widthForLabel(s.name);
+    const width = schemaWidth(s);
+    const height = schemaHeight(s);
     widths.set(s.id, width);
-    g.setNode(s.id, { width, height: SCHEMA_H });
+    heights.set(s.id, height);
+    g.setNode(s.id, { width, height });
   }
   for (const op of operationNodes) {
     const width = widthForLabel(`${op.method} ${op.path}`, OP_W);
@@ -174,13 +226,14 @@ export function computeView(graph: SchemaGraph, options: ViewOptions): View {
   for (const s of schemaNodes) {
     const n = g.node(s.id);
     const width = widths.get(s.id) ?? SCHEMA_W;
+    const height = heights.get(s.id) ?? SCHEMA_H;
     const at = pinned[s.id];
     positioned.push({
       id: s.id,
       x: at ? at.x : n.x - width / 2,
-      y: at ? at.y : n.y - SCHEMA_H / 2,
+      y: at ? at.y : n.y - height / 2,
       width,
-      height: SCHEMA_H,
+      height,
       data: s,
     });
   }
