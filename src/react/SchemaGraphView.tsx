@@ -17,7 +17,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { buildSchemaGraph } from "../graph.js";
 import type { OperationNode, SchemaGraph, SchemaNode } from "../types.js";
-import { computeView, defaultFocus } from "../viewmodel.js";
+import { computeView, defaultFocus, fieldPreview, referenceLabel, referencedName } from "../viewmodel.js";
 
 /**
  * Interactive schema explorer for one OpenAPI document. Schema-centric with an
@@ -39,6 +39,21 @@ export interface SchemaGraphViewProps {
   showOperations?: boolean;
   /** Start with structureless schemas drawn (see `SchemaNode.simple`). Default false. */
   showSimple?: boolean;
+  /**
+   * Whether operation nodes are shown, for an embedder that draws its own
+   * control. When set, it wins over the built-in toggle and over
+   * `showOperations`; pair it with `onOperationsChange` to hear the toggle.
+   */
+  operations?: boolean;
+  onOperationsChange?: (shown: boolean) => void;
+  /** Whether structureless schemas are drawn, controlled; see `operations`. */
+  simple?: boolean;
+  onSimpleChange?: (shown: boolean) => void;
+  /**
+   * Draw the built-in toggles over the canvas. Default true. An embedder with
+   * its own toolbar turns them off and passes `operations` and `simple`.
+   */
+  toolbar?: boolean;
   /** Canvas height. Default "70vh". */
   height?: string | number;
   /**
@@ -59,6 +74,8 @@ type FlowNodeData = {
   expanded: boolean;
   /** Laid-out width — long generated names are unreadable in a fixed box. */
   width?: number;
+  /** Names of the document's schemas, so a field whose type is one can be marked. */
+  schemaNames: ReadonlySet<string>;
 };
 
 /**
@@ -83,6 +100,8 @@ const palette = {
   accent: "var(--sg-accent, #5B4CF5)",
   canvas: "var(--sg-canvas, transparent)",
   panelBg: "var(--sg-panel-bg, #fafbfc)",
+  /** Behind an edge label, so the line doesn't run through the text. */
+  canvasLabel: "var(--sg-label-bg, var(--sg-node-bg, #ffffff))",
   /** Selection ring — a token can't be alpha-composited, so it's its own property. */
   ring: "var(--sg-accent-ring, #5B4CF522)",
 };
@@ -149,7 +168,7 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
         border: `1.5px solid ${data.selected ? palette.schemaSelected : palette.border}`,
         background: isSchema ? palette.schemaBg : palette.opBg,
         boxShadow: data.selected ? `0 0 0 3px ${palette.ring}` : "0 1px 2px #0000000a",
-        padding: "10px 12px",
+        padding: isSchema ? "8px 0 8px" : "10px 12px",
         fontFamily: "ui-sans-serif, system-ui, sans-serif",
         cursor: "pointer",
       }}
@@ -166,22 +185,14 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              padding: "0 12px 6px",
+              borderBottom: (entity as SchemaNode).fields.length ? `1px solid ${palette.border}` : undefined,
             }}
           >
             {(entity as SchemaNode).name}
             {(entity as SchemaNode).cyclic ? " ↺" : ""}
           </div>
-          <div style={{ fontSize: 11, color: palette.muted, marginTop: 4 }}>
-            {(entity as SchemaNode).fields.length} fields
-            {(entity as SchemaNode).referencedBy.length > 0
-              ? ` · used by ${(entity as SchemaNode).referencedBy.length}`
-              : ""}
-            {!data.expanded &&
-            (entity as SchemaNode).references.length + (entity as SchemaNode).referencedBy.length >
-              0
-              ? " · click to expand"
-              : ""}
-          </div>
+          <SchemaFields schema={entity as SchemaNode} schemaNames={data.schemaNames} />
         </>
       ) : (
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -214,6 +225,64 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
   );
 }
 
+/**
+ * The first few fields of a schema, name on the left and type on the right.
+ * A type that is another schema is drawn in the accent colour: those are the
+ * fields the edges leave from.
+ */
+function SchemaFields({ schema, schemaNames }: { schema: SchemaNode; schemaNames: ReadonlySet<string> }) {
+  const { fields, more } = fieldPreview(schema);
+  if (!fields.length) {
+    return (
+      <div style={{ fontSize: 11, color: palette.muted, padding: "2px 12px 0" }}>
+        {schema.simple ? "no fields" : "no fields of its own"}
+      </div>
+    );
+  }
+  const line: CSSProperties = {
+    display: "flex",
+    gap: 8,
+    alignItems: "baseline",
+    height: 18,
+    padding: "0 12px",
+    fontFamily: "ui-monospace, monospace",
+    fontSize: 11,
+    whiteSpace: "nowrap",
+  };
+  return (
+    <div style={{ paddingTop: 4 }}>
+      {fields.map((field) => {
+        const isRef = schemaNames.has(referencedName(field.type));
+        return (
+          <div key={field.name} style={line}>
+            <span style={{ color: palette.text, overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+              {field.name}
+              {field.required ? "" : "?"}
+            </span>
+            <span
+              style={{
+                marginLeft: "auto",
+                color: isRef ? palette.accent : palette.muted,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                flex: "none",
+                maxWidth: "60%",
+              }}
+            >
+              {field.type}
+            </span>
+          </div>
+        );
+      })}
+      {more > 0 && (
+        <div style={{ ...line, fontFamily: "ui-sans-serif, system-ui, sans-serif", color: palette.muted }}>
+          +{more} more
+        </div>
+      )}
+    </div>
+  );
+}
+
 const nodeTypes: NodeTypes = { entity: SchemaFlowNode as NodeTypes[string] };
 
 export function SchemaGraphView({
@@ -225,6 +294,11 @@ export function SchemaGraphView({
   height = "70vh",
   onSelectSchema,
   hidePanel = false,
+  operations,
+  onOperationsChange,
+  simple,
+  onSimpleChange,
+  toolbar = true,
 }: SchemaGraphViewProps) {
   const graph = useMemo(() => {
     if (prebuilt) return prebuilt;
@@ -235,8 +309,20 @@ export function SchemaGraphView({
   const focus = initialSchema ?? defaultFocus(graph);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(focus ? [focus] : []));
   const [selected, setSelected] = useState<string | undefined>(focus);
-  const [showOperations, setShowOperations] = useState(initialShowOperations);
-  const [showSimple, setShowSimple] = useState(initialShowSimple);
+  const [ownOperations, setOwnOperations] = useState(initialShowOperations);
+  const [ownSimple, setOwnSimple] = useState(initialShowSimple);
+  // Controlled when the embedder passes a value; the built-in toggle still reports changes.
+  const showOperations = operations ?? ownOperations;
+  const showSimple = simple ?? ownSimple;
+  const setShowOperations = (shown: boolean) => {
+    setOwnOperations(shown);
+    onOperationsChange?.(shown);
+  };
+  const setShowSimple = (shown: boolean) => {
+    setOwnSimple(shown);
+    onSimpleChange?.(shown);
+  };
+  const schemaNames = useMemo(() => new Set(graph.schemas.map((s) => s.name)), [graph]);
   const simpleCount = graph.schemas.filter((s) => s.simple).length;
 
   // Positions the user dragged. Layout defers to these, so arranging the canvas by hand
@@ -274,10 +360,11 @@ export function SchemaGraphView({
           selected: n.id === selected,
           expanded: expanded.has(n.id),
           width: n.width,
+          schemaNames,
         },
       })),
     );
-  }, [view, selected, expanded, adjacent]);
+  }, [view, selected, expanded, adjacent, schemaNames]);
 
   // Without this handler React Flow treats the node array as fully controlled and silently
   // discards drags — the nodes look draggable and refuse to move.
@@ -290,13 +377,30 @@ export function SchemaGraphView({
       }
     }
   }, []);
+  const byId = useMemo(() => new Map(graph.schemas.map((s) => [s.id, s])), [graph]);
   const flowEdges: Edge[] = view.edges.map((e) => {
     const near = !adjacent || (adjacent.has(e.from) && adjacent.has(e.to));
+    const from = e.kind === "references" ? byId.get(e.from) : undefined;
+    const to = byId.get(e.to);
+    // Only edges in the selected neighbourhood are labelled: faded edges' labels
+    // pile up on each other and read as noise.
+    // Two schemas that refer to each other get two edges along the same path, and
+    // their labels land on the same spot. Only one is labelled: the one leaving the
+    // selected schema, or with nothing selected, the first by id.
+    const reverse = e.kind === "references" && view.edges.some((r) => r.kind === "references" && r.from === e.to && r.to === e.from);
+    const labelThis = !reverse || (selected ? e.from === selected : e.from < e.to);
+    const label = near && labelThis && from && to ? referenceLabel(from, to.name) : undefined;
     return {
       id: `${e.kind}:${e.from}->${e.to}`,
       source: e.from,
       target: e.to,
       animated: e.kind === "uses" && near,
+      // The field that refers, on references edges: the line says why the boxes are joined.
+      label,
+      labelStyle: { fontFamily: "ui-monospace, monospace", fontSize: 10, fill: palette.muted },
+      labelBgStyle: { fill: palette.canvasLabel },
+      labelBgPadding: [4, 2] as [number, number],
+      labelBgBorderRadius: 4,
       style: {
         stroke: e.kind === "uses" ? palette.muted : palette.accent,
         strokeWidth: near ? 1.5 : 1,
@@ -374,6 +478,7 @@ export function SchemaGraphView({
           a flow container removes the guess: they stack, they stay aligned, and
           the group wraps inside the canvas instead of spilling out of it.
         */}
+        {toolbar && (
         <div
           className="sg-toolbar"
           style={{
@@ -414,6 +519,7 @@ export function SchemaGraphView({
             </label>
           )}
         </div>
+        )}
       </div>
 
       {selectedSchema && !hidePanel && (

@@ -59,6 +59,32 @@ export function Schemas({ spec }: { spec: string }) {
 }
 ```
 
+Each schema node lists its first few fields with their types, and a field whose
+type is another schema is drawn in the accent colour. An edge between two
+schemas is labelled with the field that refers.
+
+The canvas draws its own toggles for operations and for simple types. An app
+with its own toolbar can hide them and control both:
+
+```tsx
+const [operations, setOperations] = useState(false);
+
+<SchemaGraphView
+  spec={spec}
+  toolbar={false}
+  operations={operations}
+  onOperationsChange={setOperations}
+  initialSchema={focus}
+  onSelectSchema={setFocus}
+  hidePanel
+/>
+```
+
+`operations` and `simple` win over the built-in toggles when set;
+`showOperations` and `showSimple` only set where they start. `initialSchema`
+centres the canvas on a schema, and `onSelectSchema` with `hidePanel` lets the
+app show its own detail view.
+
 The component imports React Flow's stylesheet, so it needs a bundler that
 handles CSS imports (Vite, Next.js, webpack and similar do). In Next.js, add
 the package to `transpilePackages`.
@@ -79,6 +105,7 @@ nothing it still looks fine. Set them on any parent element:
 | `--sg-accent` | Selection and `$ref` edges |
 | `--sg-accent-ring` | Selection ring (needs its own value, because alpha can't be applied to a token) |
 | `--sg-panel-bg` | Detail panel and toggle chips |
+| `--sg-label-bg` | Behind edge labels (defaults to `--sg-node-bg`) |
 
 ## Schemas with no structure
 
