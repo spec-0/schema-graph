@@ -23,6 +23,9 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Must match the Environment set for this package's trusted publisher on
+    # npmjs.com; npm refuses the OIDC token when they differ.
+    environment: production
     permissions:
       contents: read
       id-token: write
