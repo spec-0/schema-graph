@@ -1,6 +1,6 @@
 {
   "name": "@spec0/schema-graph",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Parse an OpenAPI document and explore its schemas as an interactive graph.",
   "license": "MIT",
   "homepage": "https://github.com/spec-0/schema-graph#readme",
