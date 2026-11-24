@@ -56,7 +56,8 @@ export interface View {
 const SCHEMA_W = 220;
 const SCHEMA_H = 72;
 const OP_W = 240;
-const OP_H = 44;
+/** An operation box's height; SchemaGraphView draws it exactly this tall. */
+export const OP_H = 44;
 
 /** Cap on neighbours revealed per hop — see ViewOptions.maxNeighbours. */
 export const DEFAULT_MAX_NEIGHBOURS = 12;
@@ -74,18 +75,39 @@ export function fieldPreview(schema: SchemaNode, limit = PREVIEW_FIELDS): { fiel
   return { fields, more: schema.fields.length - fields.length };
 }
 
-// The node's parts, in pixels: the header with the name, one line per listed
-// field, and a "+N more" line. Layout needs the real height, or dagre packs
-// taller nodes into each other.
-const HEADER_H = 34;
-const FIELD_LINE_H = 18;
-const NODE_PAD_B = 8;
+/**
+ * A schema box's parts, in pixels, top to bottom. The box in SchemaGraphView is
+ * drawn with exactly these, so layout knows the real height and where each field's
+ * row is, for lines that leave from a field.
+ */
+export const NODE_GEOMETRY = {
+  border: 1.5,
+  padTop: 8,
+  /** The name line. Fixed, so the box doesn't depend on the font's own line height. */
+  nameLine: 16,
+  namePadBottom: 6,
+  rule: 1,
+  fieldsPadTop: 4,
+  fieldLine: 18,
+  padBottom: 8,
+} as const;
+
+const G = NODE_GEOMETRY;
+/** From the box's top edge to its first field row. */
+export const FIELDS_TOP = G.border + G.padTop + G.nameLine + G.namePadBottom + G.rule + G.fieldsPadTop;
+/** From the box's top edge to the middle of the name line. */
+export const NAME_MIDDLE = G.border + G.padTop + G.nameLine / 2;
+
+/** The middle of a box's field row (or its "+N more" row), from the box's top edge. */
+export function fieldRowMiddle(row: number): number {
+  return FIELDS_TOP + row * G.fieldLine + G.fieldLine / 2;
+}
 
 /** A schema node's height, given the fields it lists. */
 export function schemaHeight(schema: SchemaNode): number {
   const { fields, more } = fieldPreview(schema);
   const lines = fields.length + (more > 0 ? 1 : 0);
-  return lines === 0 ? SCHEMA_H - 28 : HEADER_H + lines * FIELD_LINE_H + NODE_PAD_B;
+  return lines === 0 ? SCHEMA_H - 28 : FIELDS_TOP + lines * G.fieldLine + G.padBottom + G.border;
 }
 
 /** A schema node's width: wide enough for its name and its listed fields, within limits. */
@@ -306,4 +328,26 @@ export function edgeRoute(from: string, to: string, source: Box | undefined, tar
   if (target.x >= source.x + source.width + FORWARD_GAP) return "forward";
   const middle = (box: Box) => box.y + (box.height ?? 0) / 2;
   return middle(target) < middle(source) ? "over" : "backward";
+}
+
+/** Radius of a routed line's corners. */
+const CORNER = 8;
+
+/** An SVG path through the points, with each corner rounded. */
+export function roundedPath(points: { x: number; y: number }[], radius = CORNER): string {
+  if (points.length === 0) return "";
+  let d = `M${points[0]!.x} ${points[0]!.y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    const c = points[i + 1]!;
+    const r = Math.min(radius, Math.hypot(b.x - a.x, b.y - a.y) / 2, Math.hypot(c.x - b.x, c.y - b.y) / 2);
+    const inX = b.x - Math.sign(b.x - a.x) * r;
+    const inY = b.y - Math.sign(b.y - a.y) * r;
+    const outX = b.x + Math.sign(c.x - b.x) * r;
+    const outY = b.y + Math.sign(c.y - b.y) * r;
+    d += ` L${inX} ${inY} Q${b.x} ${b.y} ${outX} ${outY}`;
+  }
+  const last = points[points.length - 1]!;
+  return `${d} L${last.x} ${last.y}`;
 }

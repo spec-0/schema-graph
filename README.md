@@ -85,11 +85,19 @@ const [operations, setOperations] = useState(false);
 centres the canvas on a schema, and `onSelectSchema` with `hidePanel` lets the
 app show its own detail view.
 
-Lines run straight, with rounded corners. A line to a box that sits behind the
-one it leaves from goes round the row, over or under it, instead of back across it. Boxes can be
-dragged, and **Tidy up** in the built-in toolbar puts them back and lays the
-graph out again. With your own toolbar, change `tidyUp` (any number) to do the
-same, and use `onMovedChange` to know when there's anything to tidy:
+The canvas is laid out with [ELK](https://eclipse.dev/elk/) (the Eclipse
+Layout Kernel), which places the boxes and routes every line in one pass. Lines
+run straight with rounded corners and go around boxes, not through them. A line
+leaves from the row of the field that makes it (`customer` on Order), or from
+the "+N more" row when that field isn't listed, so you can tell which field each
+line belongs to. Lines that would run on top of each other are spaced apart, and
+the layout is the same every time for the same graph. ELK is loaded the first
+time a graph opens, as its own chunk.
+
+Boxes can be dragged. A line to a box you've moved is drawn straight to it,
+until **Tidy up** in the built-in toolbar puts every box back and lays the graph
+out again. With your own toolbar, change `tidyUp` (any number) to do the same,
+and use `onMovedChange` to know when there's anything to tidy:
 
 ```tsx
 const [tidy, setTidy] = useState(0);
@@ -99,9 +107,29 @@ const [moved, setMoved] = useState(false);
 <button disabled={!moved} onClick={() => setTidy((n) => n + 1)}>Tidy up</button>
 ```
 
+`layout="dagre"` keeps the layout from before 0.4.0: boxes placed by dagre,
+and lines drawn from box to box without routing.
+
 The component imports React Flow's stylesheet, so it needs a bundler that
 handles CSS imports (Vite, Next.js, webpack and similar do). In Next.js, add
 the package to `transpilePackages`.
+
+## Layout without React
+
+`@spec0/schema-graph/elk` runs the same layout on the data model, for drawing
+the graph some other way:
+
+```ts
+import { buildSchemaGraph, defaultFocus, roundedPath } from "@spec0/schema-graph";
+import { computeRoutedView } from "@spec0/schema-graph/elk";
+
+const graph = buildSchemaGraph(spec);
+const view = await computeRoutedView(graph, { focus: defaultFocus(graph), expanded: new Set() });
+
+view.nodes;  // boxes, with x, y, width and height
+view.routes; // [{ from, to, kind, points, label }]: every line's start, bends and end
+roundedPath(view.routes[0].points); // an SVG path with rounded corners
+```
 
 ## Theming
 
@@ -153,4 +181,7 @@ Issues and pull requests are welcome.
 
 ## License
 
-MIT
+MIT. The layout uses [elkjs](https://github.com/kieler/elkjs), which is
+licensed under the [Eclipse Public License 2.0](https://www.eclipse.org/legal/epl-2.0/)
+and installed as a dependency, unchanged. An app that bundles this package
+should include elkjs's licence notice with its other third-party notices.
