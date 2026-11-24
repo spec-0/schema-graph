@@ -266,3 +266,36 @@ export function computeView(graph: SchemaGraph, options: ViewOptions): View {
 
   return { nodes: positioned, edges, focus, truncated };
 }
+
+/** A box on the canvas, where it is now: laid out, or where the user dragged it. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+}
+
+/**
+ * How a line between two boxes is drawn.
+ *
+ * - `forward`: the target is to the right, so the line leaves the right side and comes
+ *   in on the left, as the layout intends.
+ * - `backward`: the target is level with or behind the source. A line from the right
+ *   side to the left side would swing back across the whole row, over the boxes in
+ *   between, so it leaves from the bottom and comes in at the bottom instead, and
+ *   runs under the row.
+ * - `self`: a schema that refers to itself. The line loops from the right side over
+ *   the top of the box.
+ *
+ * Decided from where the boxes are now, not from the layout, so a line still takes
+ * the right route after the user drags a box behind the one it points to.
+ */
+export type EdgeRoute = "forward" | "backward" | "self";
+
+/** Room the line needs between two boxes before it can run straight across. */
+export const FORWARD_GAP = 24;
+
+export function edgeRoute(from: string, to: string, source: Box | undefined, target: Box | undefined): EdgeRoute {
+  if (from === to) return "self";
+  if (!source || !target) return "forward";
+  return target.x >= source.x + source.width + FORWARD_GAP ? "forward" : "backward";
+}

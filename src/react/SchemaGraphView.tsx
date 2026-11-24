@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Background,
   Controls,
@@ -12,12 +12,21 @@ import {
   type NodeChange,
   type NodeProps,
   type NodeTypes,
+  type ReactFlowInstance,
   applyNodeChanges,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { buildSchemaGraph } from "../graph.js";
 import type { OperationNode, SchemaGraph, SchemaNode } from "../types.js";
-import { computeView, defaultFocus, fieldPreview, referenceLabel, referencedName } from "../viewmodel.js";
+import {
+  computeView,
+  defaultFocus,
+  edgeRoute,
+  fieldPreview,
+  referenceLabel,
+  referencedName,
+  type EdgeRoute,
+} from "../viewmodel.js";
 
 /**
  * Interactive schema explorer for one OpenAPI document. Schema-centric with an
@@ -66,6 +75,14 @@ export interface SchemaGraphViewProps {
   onSelectSchema?: (name: string) => void;
   /** Hide the built-in detail panel, for embedders handling selection themselves. */
   hidePanel?: boolean;
+  /**
+   * Tidy up from an embedder's own toolbar. Each time this number changes, the boxes
+   * the user moved go back to the layout and the canvas fits the graph again. The
+   * built-in toolbar has its own Tidy up button.
+   */
+  tidyUp?: number;
+  /** Called with whether any box has been moved, so an embedder can enable its Tidy up control. */
+  onMovedChange?: (moved: boolean) => void;
 }
 
 type FlowNodeData = {
@@ -157,6 +174,23 @@ const toggleStyle: CSSProperties = {
   userSelect: "none",
 };
 
+/** Lines attach to handles, but the handles aren't for the user to drag new lines from. */
+const hiddenHandle: CSSProperties = { opacity: 0, pointerEvents: "none" };
+
+/** Which handles a line uses for each route. */
+const HANDLES: Record<EdgeRoute, { sourceHandle: string; targetHandle: string }> = {
+  forward: { sourceHandle: "out", targetHandle: "in" },
+  backward: { sourceHandle: "out-bottom", targetHandle: "in-bottom" },
+  self: { sourceHandle: "out", targetHandle: "in-top" },
+};
+
+/**
+ * Lines run straight, horizontally and vertically, with rounded corners. The default
+ * curve ignores the other boxes and wanders over them; straight runs between the
+ * columns of the layout read as wiring and stay out of the boxes' way.
+ */
+const EDGE_PATH = { borderRadius: 10, offset: 20 };
+
 function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
   const entity = data.entity;
   const isSchema = entity.kind === "schema";
@@ -173,7 +207,10 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
         cursor: "pointer",
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      {/* Where lines attach; see edgeRoute for which pair a line uses. */}
+      <Handle id="in" type="target" position={Position.Left} style={hiddenHandle} />
+      <Handle id="in-bottom" type="target" position={Position.Bottom} style={hiddenHandle} />
+      <Handle id="in-top" type="target" position={Position.Top} style={hiddenHandle} />
       {isSchema ? (
         <>
           <div
@@ -220,7 +257,8 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
           </span>
         </div>
       )}
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      <Handle id="out" type="source" position={Position.Right} style={hiddenHandle} />
+      <Handle id="out-bottom" type="source" position={Position.Bottom} style={hiddenHandle} />
     </div>
   );
 }
@@ -299,6 +337,8 @@ export function SchemaGraphView({
   simple,
   onSimpleChange,
   toolbar = true,
+  tidyUp,
+  onMovedChange,
 }: SchemaGraphViewProps) {
   const graph = useMemo(() => {
     if (prebuilt) return prebuilt;
@@ -328,6 +368,25 @@ export function SchemaGraphView({
   // Positions the user dragged. Layout defers to these, so arranging the canvas by hand
   // survives expanding, collapsing and toggling.
   const [pinned, setPinned] = useState<Record<string, { x: number; y: number }>>({});
+  const moved = Object.keys(pinned).length > 0;
+  useEffect(() => {
+    onMovedChange?.(moved);
+  }, [moved, onMovedChange]);
+
+  // Tidy up: forget the moves, so the layout places every box again, then fit the
+  // canvas to the result once the nodes have their new positions.
+  const flow = useRef<ReactFlowInstance | null>(null);
+  const [fitPending, setFitPending] = useState(false);
+  const tidy = useCallback(() => {
+    setPinned({});
+    setFitPending(true);
+  }, []);
+  const lastTidyUp = useRef(tidyUp);
+  useEffect(() => {
+    if (tidyUp === lastTidyUp.current) return;
+    lastTidyUp.current = tidyUp;
+    tidy();
+  }, [tidyUp, tidy]);
 
   const view = useMemo(
     () => computeView(graph, { focus, expanded, showOperations, showSimple, pinned }),
@@ -366,6 +425,20 @@ export function SchemaGraphView({
     );
   }, [view, selected, expanded, adjacent, schemaNames]);
 
+  useEffect(() => {
+    if (!fitPending) return;
+    setFitPending(false);
+    // After React Flow has measured the moved nodes.
+    requestAnimationFrame(() => flow.current?.fitView({ maxZoom: 1, padding: 0.2, duration: 300 }));
+  }, [flowNodes, fitPending]);
+
+  // Where each box is now, including while it's being dragged, so a line picks its
+  // route from what's on screen.
+  const boxes = useMemo(
+    () => new Map(flowNodes.map((n) => [n.id, { x: n.position.x, y: n.position.y, width: n.width ?? n.data.width ?? 220 }])),
+    [flowNodes],
+  );
+
   // Without this handler React Flow treats the node array as fully controlled and silently
   // discards drags — the nodes look draggable and refuse to move.
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -390,10 +463,14 @@ export function SchemaGraphView({
     const reverse = e.kind === "references" && view.edges.some((r) => r.kind === "references" && r.from === e.to && r.to === e.from);
     const labelThis = !reverse || (selected ? e.from === selected : e.from < e.to);
     const label = near && labelThis && from && to ? referenceLabel(from, to.name) : undefined;
+    const route = edgeRoute(e.from, e.to, boxes.get(e.from), boxes.get(e.to));
     return {
       id: `${e.kind}:${e.from}->${e.to}`,
       source: e.from,
       target: e.to,
+      ...HANDLES[route],
+      type: "smoothstep",
+      pathOptions: EDGE_PATH,
       animated: e.kind === "uses" && near,
       // The field that refers, on references edges: the line says why the boxes are joined.
       label,
@@ -432,6 +509,9 @@ export function SchemaGraphView({
           nodeTypes={nodeTypes}
           onNodeClick={onNodeClick}
           onNodesChange={onNodesChange}
+          onInit={(instance) => {
+            flow.current = instance as unknown as ReactFlowInstance;
+          }}
           fitView
           // Fitting 40 boxes to the viewport zooms past the point where labels mean anything;
           // cap it and let the user pan instead.
@@ -504,6 +584,15 @@ export function SchemaGraphView({
             />
             Operations
           </label>
+          <button
+            type="button"
+            onClick={tidy}
+            disabled={!moved}
+            title={moved ? "Put the boxes you moved back and lay the graph out again" : "Nothing has been moved"}
+            style={{ ...toggleStyle, opacity: moved ? 1 : 0.5, cursor: moved ? "pointer" : "default" }}
+          >
+            Tidy up
+          </button>
           {simpleCount > 0 && (
             <label
               style={toggleStyle}

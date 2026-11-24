@@ -2,6 +2,7 @@ export { buildSchemaGraph, parseSpec, typeLabel } from "./graph.js";
 export {
   computeView,
   defaultFocus,
+  edgeRoute,
   fieldPreview,
   referenceLabel,
   referencedName,
@@ -10,9 +11,10 @@ export {
   visibleSchemaIds,
   widthForLabel,
   DEFAULT_MAX_NEIGHBOURS,
+  FORWARD_GAP,
   PREVIEW_FIELDS,
 } from "./viewmodel.js";
-export type { PositionedNode, View, ViewOptions } from "./viewmodel.js";
+export type { Box, EdgeRoute, PositionedNode, View, ViewOptions } from "./viewmodel.js";
 export type {
   BuildOptions,
   FieldSummary,
