@@ -181,6 +181,7 @@ const hiddenHandle: CSSProperties = { opacity: 0, pointerEvents: "none" };
 const HANDLES: Record<EdgeRoute, { sourceHandle: string; targetHandle: string }> = {
   forward: { sourceHandle: "out", targetHandle: "in" },
   backward: { sourceHandle: "out-bottom", targetHandle: "in-bottom" },
+  over: { sourceHandle: "out-top", targetHandle: "in-top" },
   self: { sourceHandle: "out", targetHandle: "in-top" },
 };
 
@@ -259,6 +260,7 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
       )}
       <Handle id="out" type="source" position={Position.Right} style={hiddenHandle} />
       <Handle id="out-bottom" type="source" position={Position.Bottom} style={hiddenHandle} />
+      <Handle id="out-top" type="source" position={Position.Top} style={hiddenHandle} />
     </div>
   );
 }
@@ -435,7 +437,12 @@ export function SchemaGraphView({
   // Where each box is now, including while it's being dragged, so a line picks its
   // route from what's on screen.
   const boxes = useMemo(
-    () => new Map(flowNodes.map((n) => [n.id, { x: n.position.x, y: n.position.y, width: n.width ?? n.data.width ?? 220 }])),
+    () => new Map(
+        flowNodes.map((n) => [
+          n.id,
+          { x: n.position.x, y: n.position.y, width: n.width ?? n.data.width ?? 220, height: n.measured?.height },
+        ]),
+      ),
     [flowNodes],
   );
 

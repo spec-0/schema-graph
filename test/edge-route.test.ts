@@ -18,6 +18,13 @@ describe("edgeRoute", () => {
     expect(edgeRoute("A", "B", box(0), box(220 + FORWARD_GAP - 1))).toBe("backward");
   });
 
+  it("goes over the row when the target behind sits higher", () => {
+    expect(edgeRoute("A", "B", box(400, 300), box(0, 100))).toBe("over");
+    // Middles, not tops: a tall source whose top is higher can still sit lower.
+    expect(edgeRoute("A", "B", { ...box(400, 90), height: 200 }, { ...box(0, 100), height: 60 })).toBe("over");
+    expect(edgeRoute("A", "B", { ...box(400, 100), height: 60 }, { ...box(0, 90), height: 200 })).toBe("backward");
+  });
+
   it("follows a box the user dragged", () => {
     const target = box(400);
     expect(edgeRoute("A", "B", box(0), target)).toBe("forward");
@@ -44,7 +51,7 @@ describe("SchemaGraphView lines", () => {
   });
 
   it("has a handle for every route", () => {
-    for (const id of ["in", "in-bottom", "in-top", "out", "out-bottom"]) {
+    for (const id of ["in", "in-bottom", "in-top", "out", "out-bottom", "out-top"]) {
       expect(view).toContain(`id="${id}"`);
     }
   });
