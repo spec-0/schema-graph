@@ -85,6 +85,20 @@ const [operations, setOperations] = useState(false);
 centres the canvas on a schema, and `onSelectSchema` with `hidePanel` lets the
 app show its own detail view.
 
+Lines run straight, with rounded corners. A line to a box that sits behind the
+one it leaves from runs under the row instead of back across it. Boxes can be
+dragged, and **Tidy up** in the built-in toolbar puts them back and lays the
+graph out again. With your own toolbar, change `tidyUp` (any number) to do the
+same, and use `onMovedChange` to know when there's anything to tidy:
+
+```tsx
+const [tidy, setTidy] = useState(0);
+const [moved, setMoved] = useState(false);
+
+<SchemaGraphView spec={spec} toolbar={false} tidyUp={tidy} onMovedChange={setMoved} />
+<button disabled={!moved} onClick={() => setTidy((n) => n + 1)}>Tidy up</button>
+```
+
 The component imports React Flow's stylesheet, so it needs a bundler that
 handles CSS imports (Vite, Next.js, webpack and similar do). In Next.js, add
 the package to `transpilePackages`.
