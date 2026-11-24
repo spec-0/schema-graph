@@ -272,6 +272,8 @@ export interface Box {
   x: number;
   y: number;
   width: number;
+  /** Used to compare the boxes' middles; without it, their tops are compared. */
+  height?: number;
 }
 
 /**
@@ -279,17 +281,21 @@ export interface Box {
  *
  * - `forward`: the target is to the right, so the line leaves the right side and comes
  *   in on the left, as the layout intends.
- * - `backward`: the target is level with or behind the source. A line from the right
- *   side to the left side would swing back across the whole row, over the boxes in
- *   between, so it leaves from the bottom and comes in at the bottom instead, and
- *   runs under the row.
+ * - `backward` and `over`: the target is level with or behind the source. A line from
+ *   the right side to the left side would swing back across the whole row, over the
+ *   boxes in between, so it goes round the outside instead. When the target sits
+ *   higher than the source, the line leaves from the top and comes in at the top of
+ *   the target (`over`); otherwise it leaves from the bottom and comes in at the
+ *   bottom (`backward`, under the row). Going the other way would take the line past
+ *   whatever sits between the two boxes, such as the operations stacked under a
+ *   schema.
  * - `self`: a schema that refers to itself. The line loops from the right side over
  *   the top of the box.
  *
  * Decided from where the boxes are now, not from the layout, so a line still takes
  * the right route after the user drags a box behind the one it points to.
  */
-export type EdgeRoute = "forward" | "backward" | "self";
+export type EdgeRoute = "forward" | "backward" | "over" | "self";
 
 /** Room the line needs between two boxes before it can run straight across. */
 export const FORWARD_GAP = 24;
@@ -297,5 +303,7 @@ export const FORWARD_GAP = 24;
 export function edgeRoute(from: string, to: string, source: Box | undefined, target: Box | undefined): EdgeRoute {
   if (from === to) return "self";
   if (!source || !target) return "forward";
-  return target.x >= source.x + source.width + FORWARD_GAP ? "forward" : "backward";
+  if (target.x >= source.x + source.width + FORWARD_GAP) return "forward";
+  const middle = (box: Box) => box.y + (box.height ?? 0) / 2;
+  return middle(target) < middle(source) ? "over" : "backward";
 }

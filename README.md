@@ -86,7 +86,7 @@ centres the canvas on a schema, and `onSelectSchema` with `hidePanel` lets the
 app show its own detail view.
 
 Lines run straight, with rounded corners. A line to a box that sits behind the
-one it leaves from runs under the row instead of back across it. Boxes can be
+one it leaves from goes round the row, over or under it, instead of back across it. Boxes can be
 dragged, and **Tidy up** in the built-in toolbar puts them back and lays the
 graph out again. With your own toolbar, change `tidyUp` (any number) to do the
 same, and use `onMovedChange` to know when there's anything to tidy:
