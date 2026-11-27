@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   Position,
   ReactFlow,
   type Edge,
+  type EdgeProps,
+  type EdgeTypes,
   type Node,
   type NodeChange,
   type NodeProps,
@@ -23,10 +26,14 @@ import {
   defaultFocus,
   edgeRoute,
   fieldPreview,
+  NODE_GEOMETRY,
+  OP_H,
+  roundedPath,
   referenceLabel,
   referencedName,
   type EdgeRoute,
 } from "../viewmodel.js";
+import type { RoutedView } from "../elk.js";
 
 /**
  * Interactive schema explorer for one OpenAPI document. Schema-centric with an
@@ -83,6 +90,13 @@ export interface SchemaGraphViewProps {
   tidyUp?: number;
   /** Called with whether any box has been moved, so an embedder can enable its Tidy up control. */
   onMovedChange?: (moved: boolean) => void;
+  /**
+   * How the graph is laid out. `"elk"` (the default) places the boxes and routes
+   * every line around them with ELK, loaded when the graph first opens. `"dagre"` is
+   * the earlier layout: boxes placed by dagre, lines drawn between them without
+   * routing.
+   */
+  layout?: "elk" | "dagre";
 }
 
 type FlowNodeData = {
@@ -200,10 +214,12 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
       style={{
         width: (data as { width?: number }).width ?? (isSchema ? 220 : 240),
         borderRadius: 10,
-        border: `1.5px solid ${data.selected ? palette.schemaSelected : palette.border}`,
+        border: `${NODE_GEOMETRY.border}px solid ${data.selected ? palette.schemaSelected : palette.border}`,
         background: isSchema ? palette.schemaBg : palette.opBg,
         boxShadow: data.selected ? `0 0 0 3px ${palette.ring}` : "0 1px 2px #0000000a",
-        padding: isSchema ? "8px 0 8px" : "10px 12px",
+        padding: isSchema ? `${NODE_GEOMETRY.padTop}px 0 ${NODE_GEOMETRY.padBottom}px` : "0 12px",
+        // An operation is one line, centred in the height layout gave it.
+        ...(isSchema ? {} : { boxSizing: "border-box" as const, height: OP_H, display: "flex", alignItems: "center" }),
         fontFamily: "ui-sans-serif, system-ui, sans-serif",
         cursor: "pointer",
       }}
@@ -218,13 +234,14 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
             style={{
               fontFamily: "ui-monospace, monospace",
               fontSize: 13,
+              lineHeight: `${NODE_GEOMETRY.nameLine}px`,
               fontWeight: 600,
               color: palette.text,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              padding: "0 12px 6px",
-              borderBottom: (entity as SchemaNode).fields.length ? `1px solid ${palette.border}` : undefined,
+              padding: `0 12px ${NODE_GEOMETRY.namePadBottom}px`,
+              borderBottom: (entity as SchemaNode).fields.length ? `${NODE_GEOMETRY.rule}px solid ${palette.border}` : undefined,
             }}
           >
             {(entity as SchemaNode).name}
@@ -233,7 +250,7 @@ function SchemaFlowNode({ data }: NodeProps & { data: FlowNodeData }) {
           <SchemaFields schema={entity as SchemaNode} schemaNames={data.schemaNames} />
         </>
       ) : (
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0, width: "100%" }}>
           <span
             style={{
               fontFamily: "ui-monospace, monospace",
@@ -283,14 +300,15 @@ function SchemaFields({ schema, schemaNames }: { schema: SchemaNode; schemaNames
     display: "flex",
     gap: 8,
     alignItems: "baseline",
-    height: 18,
+    height: NODE_GEOMETRY.fieldLine,
+    lineHeight: `${NODE_GEOMETRY.fieldLine}px`,
     padding: "0 12px",
     fontFamily: "ui-monospace, monospace",
     fontSize: 11,
     whiteSpace: "nowrap",
   };
   return (
-    <div style={{ paddingTop: 4 }}>
+    <div style={{ paddingTop: NODE_GEOMETRY.fieldsPadTop }}>
       {fields.map((field) => {
         const isRef = schemaNames.has(referencedName(field.type));
         return (
@@ -325,6 +343,32 @@ function SchemaFields({ schema, schemaNames }: { schema: SchemaNode; schemaNames
 
 const nodeTypes: NodeTypes = { entity: SchemaFlowNode as NodeTypes[string] };
 
+type RoutedEdgeData = { points: { x: number; y: number }[]; labelAt?: { x: number; y: number } };
+
+/** A line drawn along the route ELK worked out, with its label where ELK put it. */
+function RoutedFlowEdge(props: EdgeProps) {
+  const data = props.data as RoutedEdgeData;
+  const points = data.points;
+  const mid = points[Math.floor(points.length / 2)] ?? { x: props.sourceX, y: props.sourceY };
+  return (
+    <BaseEdge
+      id={props.id}
+      path={roundedPath(points)}
+      style={props.style}
+      label={props.label}
+      labelX={data.labelAt?.x ?? mid.x}
+      labelY={data.labelAt?.y ?? mid.y}
+      labelStyle={props.labelStyle}
+      labelShowBg={props.labelShowBg}
+      labelBgStyle={props.labelBgStyle}
+      labelBgPadding={props.labelBgPadding}
+      labelBgBorderRadius={props.labelBgBorderRadius}
+    />
+  );
+}
+
+const edgeTypes: EdgeTypes = { routed: RoutedFlowEdge };
+
 export function SchemaGraphView({
   spec,
   graph: prebuilt,
@@ -341,6 +385,7 @@ export function SchemaGraphView({
   toolbar = true,
   tidyUp,
   onMovedChange,
+  layout = "elk",
 }: SchemaGraphViewProps) {
   const graph = useMemo(() => {
     if (prebuilt) return prebuilt;
@@ -395,6 +440,36 @@ export function SchemaGraphView({
     [graph, focus, expanded, showOperations, showSimple, pinned],
   );
 
+  // ELK's layout of the same boxes, with every line routed. It runs asynchronously
+  // and ELK itself is loaded on first use, so the dagre layout above stands in for
+  // the moment before it arrives, and for good if ELK can't run.
+  const [routed, setRouted] = useState<RoutedView | null>(null);
+  useEffect(() => {
+    if (layout !== "elk") {
+      setRouted(null);
+      return;
+    }
+    let live = true;
+    import("../elk.js")
+      .then(({ computeRoutedView, ELK_OPTIONS }) =>
+        computeRoutedView(graph, { focus, expanded, showOperations, showSimple }, ELK_OPTIONS),
+      )
+      .then((result) => {
+        if (!live) return;
+        setRouted(result);
+        // A new layout can move every box, so show the whole of it again.
+        setFitPending(true);
+      })
+      .catch(() => {
+        if (live) setRouted(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [layout, graph, focus, expanded, showOperations, showSimple]);
+  const routedAt = useMemo(() => new Map((routed?.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }])), [routed]);
+  const routes = useMemo(() => new Map((routed?.routes ?? []).map((r) => [r.id, r])), [routed]);
+
   // Neighbours of the selection, for focus+context dimming: on a busy canvas the point is to
   // read ONE neighbourhood, not to squint at all of them equally.
   const adjacent = useMemo(() => {
@@ -413,7 +488,7 @@ export function SchemaGraphView({
       view.nodes.map((n) => ({
         id: n.id,
         type: "entity",
-        position: { x: n.x, y: n.y },
+        position: pinned[n.id] ?? routedAt.get(n.id) ?? { x: n.x, y: n.y },
         width: n.width,
         style: adjacent && !adjacent.has(n.id) ? { opacity: 0.25 } : undefined,
         data: {
@@ -425,7 +500,7 @@ export function SchemaGraphView({
         },
       })),
     );
-  }, [view, selected, expanded, adjacent, schemaNames]);
+  }, [view, selected, expanded, adjacent, schemaNames, pinned, routedAt]);
 
   useEffect(() => {
     if (!fitPending) return;
@@ -470,14 +545,34 @@ export function SchemaGraphView({
     const reverse = e.kind === "references" && view.edges.some((r) => r.kind === "references" && r.from === e.to && r.to === e.from);
     const labelThis = !reverse || (selected ? e.from === selected : e.from < e.to);
     const label = near && labelThis && from && to ? referenceLabel(from, to.name) : undefined;
-    const route = edgeRoute(e.from, e.to, boxes.get(e.from), boxes.get(e.to));
+    const id = `${e.kind}:${e.from}->${e.to}`;
+    // ELK's route holds while both ends are where ELK put them. Once the user moves
+    // either box, the line falls back to a step line between the boxes until Tidy up.
+    const elk = routes.get(id);
+    const inPlace = (node: string) => {
+      const at = routedAt.get(node);
+      const now = boxes.get(node);
+      return Boolean(at && now && Math.abs(at.x - now.x) < 0.5 && Math.abs(at.y - now.y) < 0.5);
+    };
+    const shape =
+      elk && inPlace(e.from) && inPlace(e.to)
+        ? {
+            type: "routed",
+            data: {
+              points: elk.points,
+              labelAt: elk.label && { x: elk.label.x + elk.label.width / 2, y: elk.label.y + elk.label.height / 2 },
+            } satisfies RoutedEdgeData,
+          }
+        : {
+            ...HANDLES[edgeRoute(e.from, e.to, boxes.get(e.from), boxes.get(e.to))],
+            type: "smoothstep",
+            pathOptions: EDGE_PATH,
+          };
     return {
-      id: `${e.kind}:${e.from}->${e.to}`,
+      id,
       source: e.from,
       target: e.to,
-      ...HANDLES[route],
-      type: "smoothstep",
-      pathOptions: EDGE_PATH,
+      ...shape,
       animated: e.kind === "uses" && near,
       // The field that refers, on references edges: the line says why the boxes are joined.
       label,
@@ -514,6 +609,7 @@ export function SchemaGraphView({
           nodes={flowNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={onNodeClick}
           onNodesChange={onNodesChange}
           onInit={(instance) => {
